@@ -13,6 +13,21 @@ import sharp from "sharp";
 import { v4 as uuidv4 } from "uuid";
 import fs from "fs/promises";
 import path from "path";
+import { fileURLToPath } from "url";
+
+// 获取当前文件的目录路径
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// 获取调用项目的根目录路径（当前工作目录）
+const getCallerProjectRoot = () => {
+  return process.cwd();
+};
+
+// 获取输出目录的绝对路径（在调用项目的根目录中）
+const getOutputDir = () => {
+  return path.join(getCallerProjectRoot(), "generated-images");
+};
 
 // 尺寸预设类型定义
 interface SizePreset {
@@ -386,8 +401,8 @@ server.setRequestHandler(
           const finalFilename =
             filename || `web-image-${uuidv4().slice(0, 8)}.jpg`;
 
-          // 确保输出目录存在（使用相对路径）
-          const outputDir = "generated-images";
+          // 确保输出目录存在（使用绝对路径）
+          const outputDir = getOutputDir();
           await fs.mkdir(outputDir, { recursive: true });
 
           const filePath = path.join(outputDir, finalFilename);
@@ -440,8 +455,8 @@ server.setRequestHandler(
           const batchImageService = new ImageGenerationService(batchApiKey);
           const results = [];
 
-          // 确保输出目录存在（使用相对路径）
-          const batchOutputDir = "generated-images";
+          // 确保输出目录存在（使用绝对路径）
+          const batchOutputDir = getOutputDir();
           await fs.mkdir(batchOutputDir, { recursive: true });
 
           for (let i = 0; i < images.length; i++) {
