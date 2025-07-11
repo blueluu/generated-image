@@ -19,14 +19,43 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// 获取调用项目的根目录路径（当前工作目录）
+// 获取调用项目的根目录路径（用户的项目目录）
 const getCallerProjectRoot = () => {
-  return process.cwd();
+  // 优先使用环境变量中的项目路径
+  const envProjectPath =
+    process.env.USER_PROJECT_ROOT || process.env.PROJECT_ROOT;
+  if (envProjectPath) {
+    return envProjectPath;
+  }
+
+  const cwd = process.cwd();
+  // 如果当前工作目录是根目录或MCP服务器目录，尝试从环境变量获取用户项目路径
+  if (
+    cwd === "/" ||
+    cwd === "\\" ||
+    cwd.includes("mcp") ||
+    cwd.includes("node_modules")
+  ) {
+    // 尝试从HOME目录推断用户项目路径
+    const homeDir = process.env.HOME || process.env.USERPROFILE;
+    if (homeDir) {
+      // 默认使用用户桌面作为项目根目录
+      return path.join(homeDir, "Desktop");
+    }
+  }
+
+  return cwd;
 };
 
 // 获取输出目录的绝对路径（在调用项目的根目录中）
 const getOutputDir = () => {
-  return path.join(getCallerProjectRoot(), "generated-images");
+  const projectRoot = getCallerProjectRoot();
+  const outputPath = path.join(projectRoot, "generated-images");
+  console.error(`Debug: Project root: ${projectRoot}`);
+  console.error(`Debug: Output path: ${outputPath}`);
+  console.error(`Debug: __dirname: ${__dirname}`);
+  console.error(`Debug: process.cwd(): ${process.cwd()}`);
+  return outputPath;
 };
 
 // 尺寸预设类型定义
@@ -245,6 +274,58 @@ const COMMON_SIZES: Record<string, SizePreset> = {
   background: { width: 1920, height: 1080, description: "背景图片" },
 };
 
+// API Key 管理
+let storedApiKey: string | null = null;
+
+// 获取API Key配置文件路径
+const getApiKeyConfigPath = () => {
+  const projectRoot = getCallerProjectRoot();
+  return path.join(projectRoot, ".mcp-image-generator-config.json");
+};
+
+// 保存API Key到配置文件
+async function saveApiKey(apiKey: string): Promise<void> {
+  const configPath = getApiKeyConfigPath();
+  const config = { apiKey, timestamp: Date.now() };
+  await fs.writeFile(configPath, JSON.stringify(config, null, 2));
+  storedApiKey = apiKey;
+}
+
+// 从配置文件加载API Key
+async function loadApiKey(): Promise<string | null> {
+  if (storedApiKey) {
+    return storedApiKey;
+  }
+
+  try {
+    const configPath = getApiKeyConfigPath();
+    const configData = await fs.readFile(configPath, "utf-8");
+    const config = JSON.parse(configData);
+    storedApiKey = config.apiKey;
+    return storedApiKey;
+  } catch (error) {
+    return null;
+  }
+}
+
+// 获取API Key（优先使用存储的，否则提示用户设置）
+async function getApiKey(providedApiKey?: string): Promise<string> {
+  if (providedApiKey) {
+    // 如果用户提供了API Key，保存它
+    await saveApiKey(providedApiKey);
+    return providedApiKey;
+  }
+
+  const savedApiKey = await loadApiKey();
+  if (savedApiKey) {
+    return savedApiKey;
+  }
+
+  throw new Error(
+    "请先设置ModelScope API密钥。使用 set_api_key 工具设置API密钥，或在调用时提供 api_key 参数。"
+  );
+}
+
 // 创建MCP服务器
 const server = new Server(
   {
@@ -263,6 +344,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
       {
+        name: "set_api_key",
+        description: "设置ModelScope API密钥，设置后可在后续调用中自动使用",
+        inputSchema: {
+          type: "object",
+          properties: {
+            api_key: {
+              type: "string",
+              description: "ModelScope API密钥",
+            },
+          },
+          required: ["api_key"],
+        },
+      },
+      {
         name: "generate_web_image",
         description: "为网页设计生成AI图片，支持自定义尺寸和预设尺寸",
         inputSchema: {
@@ -274,7 +369,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             api_key: {
               type: "string",
-              description: "ModelScope API密钥",
+              description: "ModelScope API密钥（可选，如果已设置则自动使用）",
             },
             size_preset: {
               type: "string",
@@ -294,7 +389,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               description: "保存的文件名（可选，默认自动生成）",
             },
           },
-          required: ["prompt", "api_key"],
+          required: ["prompt"],
         },
       },
       {
@@ -331,10 +426,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             api_key: {
               type: "string",
-              description: "ModelScope API密钥",
+              description: "ModelScope API密钥（可选，如果已设置则自动使用）",
             },
           },
-          required: ["images", "api_key"],
+          required: ["images"],
         },
       },
     ] as Tool[],
@@ -349,6 +444,22 @@ server.setRequestHandler(
 
     try {
       switch (name) {
+        case "set_api_key":
+          const { api_key: newApiKey } = args as { api_key: string };
+          if (!newApiKey) {
+            throw new Error("api_key是必需的参数");
+          }
+
+          await saveApiKey(newApiKey);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `✅ API密钥设置成功！\n现在可以在后续调用中自动使用此密钥。`,
+              },
+            ],
+          };
+
         case "list_size_presets":
           return {
             content: [
@@ -363,16 +474,19 @@ server.setRequestHandler(
           const { prompt, api_key, size_preset, width, height, filename } =
             args as {
               prompt: string;
-              api_key: string;
+              api_key?: string;
               size_preset?: string;
               width?: number;
               height?: number;
               filename?: string;
             };
 
-          if (!prompt || !api_key) {
-            throw new Error("prompt和api_key是必需的参数");
+          if (!prompt) {
+            throw new Error("prompt是必需的参数");
           }
+
+          // 获取API Key（优先使用提供的，否则使用存储的）
+          const finalApiKey = await getApiKey(api_key);
 
           // 处理中文prompt翻译
           const { translatedPrompt, isTranslated } =
@@ -390,7 +504,7 @@ server.setRequestHandler(
             finalHeight = height;
           }
 
-          const imageService = new ImageGenerationService(api_key);
+          const imageService = new ImageGenerationService(finalApiKey);
           const imageBuffer = await imageService.generateImage(
             translatedPrompt,
             finalWidth,
@@ -441,18 +555,19 @@ server.setRequestHandler(
               height?: number;
               filename?: string;
             }>;
-            api_key: string;
+            api_key?: string;
           };
 
           if (!images || !Array.isArray(images) || images.length === 0) {
             throw new Error("images数组不能为空");
           }
 
-          if (!batchApiKey) {
-            throw new Error("api_key是必需的参数");
-          }
+          // 获取API Key（优先使用提供的，否则使用存储的）
+          const finalBatchApiKey = await getApiKey(batchApiKey);
 
-          const batchImageService = new ImageGenerationService(batchApiKey);
+          const batchImageService = new ImageGenerationService(
+            finalBatchApiKey
+          );
           const results = [];
 
           // 确保输出目录存在（使用绝对路径）
