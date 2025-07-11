@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "web-design-image-generator": {
+      "command": "node",
+      "args": ["/path/to/web-design-image-generator-mcp-server/dist/index.js"],
+      "description": "AI图片生成服务，专为网页设计优化"
+    }
+  }
+}
