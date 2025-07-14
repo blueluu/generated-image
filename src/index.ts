@@ -28,22 +28,57 @@ const getCallerProjectRoot = () => {
     return envProjectPath;
   }
 
+  // 尝试从环境变量中获取更多信息
+  const pwdEnv = process.env.PWD;
+  const initCwd = process.env.INIT_CWD;
+
   const cwd = process.cwd();
-  // 如果当前工作目录是根目录或MCP服务器目录，尝试从环境变量获取用户项目路径
-  if (
-    cwd === "/" ||
-    cwd === "\\" ||
-    cwd.includes("mcp") ||
-    cwd.includes("node_modules")
-  ) {
-    // 尝试从HOME目录推断用户项目路径
+
+  // 检查当前工作目录是否是MCP服务器自身的目录
+  const currentDir = path.resolve(cwd);
+  const serverDir = path.resolve(__dirname, "..");
+
+  // 如果当前工作目录就是MCP服务器目录或其子目录，说明需要找到真正的用户项目目录
+  if (currentDir.startsWith(serverDir)) {
+    // 优先使用 INIT_CWD（npm/yarn 启动时的原始目录）
+    if (initCwd && !initCwd.startsWith(serverDir)) {
+      return initCwd;
+    }
+
+    // 其次使用 PWD 环境变量
+    if (pwdEnv && !pwdEnv.startsWith(serverDir)) {
+      return pwdEnv;
+    }
+
+    // 尝试从环境变量获取用户项目路径
     const homeDir = process.env.HOME || process.env.USERPROFILE;
     if (homeDir) {
-      // 默认使用用户桌面作为项目根目录
-      return path.join(homeDir, "Desktop");
+      // 检查常见的项目目录位置
+      const commonProjectDirs = [
+        path.join(homeDir, "Documents"),
+        path.join(homeDir, "Desktop"),
+        path.join(homeDir, "Projects"),
+        path.join(homeDir, "workspace"),
+        homeDir,
+      ];
+
+      // 返回第一个存在的目录
+      for (const dir of commonProjectDirs) {
+        try {
+          if (require("fs").existsSync(dir)) {
+            return dir;
+          }
+        } catch (e) {
+          // 忽略错误，继续尝试下一个
+        }
+      }
     }
+
+    // 如果都找不到，使用用户主目录
+    return homeDir || cwd;
   }
 
+  // 如果当前工作目录不是MCP服务器目录，直接使用它
   return cwd;
 };
 
@@ -55,6 +90,8 @@ const getOutputDir = () => {
   console.error(`Debug: Output path: ${outputPath}`);
   console.error(`Debug: __dirname: ${__dirname}`);
   console.error(`Debug: process.cwd(): ${process.cwd()}`);
+  console.error(`Debug: PWD: ${process.env.PWD}`);
+  console.error(`Debug: INIT_CWD: ${process.env.INIT_CWD}`);
   return outputPath;
 };
 
@@ -325,7 +362,6 @@ async function getApiKey(providedApiKey?: string): Promise<string> {
     "请先设置ModelScope API密钥。使用 set_api_key 工具设置API密钥，或在调用时提供 api_key 参数。"
   );
 }
-
 // 创建MCP服务器
 const server = new Server(
   {
@@ -355,6 +391,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
           },
           required: ["api_key"],
+        },
+      },
+      {
+        name: "set_project_root",
+        description:
+          "设置用户项目根目录，图片将保存在此目录下的generated-images文件夹中",
+        inputSchema: {
+          type: "object",
+          properties: {
+            project_root: {
+              type: "string",
+              description: "用户项目的根目录路径",
+            },
+          },
+          required: ["project_root"],
         },
       },
       {
@@ -456,6 +507,37 @@ server.setRequestHandler(
               {
                 type: "text",
                 text: `✅ API密钥设置成功！\n现在可以在后续调用中自动使用此密钥。`,
+              },
+            ],
+          };
+
+        case "set_project_root":
+          const { project_root } = args as { project_root: string };
+          if (!project_root) {
+            throw new Error("project_root是必需的参数");
+          }
+
+          // 验证路径是否存在
+          try {
+            const stats = await fs.stat(project_root);
+            if (!stats.isDirectory()) {
+              throw new Error("指定的路径不是一个有效的目录");
+            }
+          } catch (error) {
+            throw new Error(`无法访问指定的目录: ${project_root}`);
+          }
+
+          // 设置环境变量
+          process.env.USER_PROJECT_ROOT = project_root;
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: `✅ 项目根目录设置成功！\n📁 项目根目录: ${project_root}\n💾 图片将保存到: ${path.join(
+                  project_root,
+                  "generated-images"
+                )}`,
               },
             ],
           };
