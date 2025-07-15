@@ -4,6 +4,9 @@
   "description": "MCP Server for generating web design placeholder images using AI text-to-image models",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "mcp-tools": "./dist/index.js"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
