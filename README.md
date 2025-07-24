@@ -27,13 +27,7 @@ npm run build
 
 ## 使用方法
 
-### 1. 启动 MCP Server
-
-```bash
-npm start
-```
-
-### 2. 在 MCP 客户端中配置
+### 1. 在 MCP 客户端中配置
 
 在你的 MCP 客户端配置文件中添加：
 
