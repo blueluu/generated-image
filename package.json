@@ -1,6 +1,6 @@
 {
   "name": "@datafe/web-design-image-generator-mcp-server",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "MCP Server for generating web design placeholder images using AI text-to-image models",
   "type": "module",
   "main": "dist/index.js",
